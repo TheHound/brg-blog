@@ -64,13 +64,87 @@ void handleNewItemAddedAlert(AlertSpec alertSpec) {
 ```
 ### Pros
 - Simple to write assuming you are already using queues
-- Plays nice with immutable data stores (i.e. no updates / deletes)
+- Plays nice with immutable data stores / event sourcing model (i.e. no updates / deletes)
 
 ### Cons
-- Latency
-- How to decide / set the timeout
-- Doesn't work naturally for updates only creates
+- Latency - You don't actually have to wait 60 seconds per message only 60 seconds since message was put on queue but even so, still waiting
+- How to decide / set the timeout - In the example above I used 60 seconds but what if the transaction took longer than 60 seconds, messages would be consumed, assumed rolledback and thrown away then the transaction completes. Need to account for this somehow.
+- Doesn't work naturally for updates only creates - A create can be verified at a later date, is it there or not, an in place update cannot be reliabley verified after the fact without additional tracking tables.
 
 ## State machines
-## Change Data Capture
+You can use a state machine to track the state and pass data between them. 
+Completely made up psuedo code syntax:
+```java
+void saveTodoItem(TodoItemSpec spec) {
+    CreateTodoItem create = createTodoItemState(spec);
+    transition (create) {
+        case start -> context.record("item", todoItemRepo.save(spec))
+        case makeAlert -> context.record("alert", toAlert(context.get("item")))
+        case sendAlert -> alertService.sendNewItemAddedAlert(context.get("alert"))
+        case sendAudit -> auditService.recordItemAdded(newAuditItem(context.get("item")))
+    }
+}
+```
+The key here is each operation is in its own state and some library or framework takes ownership of tracking the states and advancing, retrying where needed and working across app shutdowns / startups.
+See Netflix Conductor, Temporal, Spring Statemachine for more info.
+The state machine approach can also be done manually with no frameworks if the states are simple and you are using queues.
+```java
+void saveTodoItemFromQueue(TodoItemSpec spec) {
+    // Walk through steps of saving items, createing alert, sending audit
+    // Ack message from queue at end
+}
+```
+
+### Pros
+- Battle tested open source tooling exists for this
+- Tooling often comes with good observability, ability to see how many in flight state machines at whats states with what data
+
+### Cons
+- State machine libraries are often a significant departure from the previous way of writing code. They can come with additional infrastructure requirements, somewhere to queue messages, track states etc.
+- The 'state' of your application is now persisted between runs, previously only had to consider data that was stored in databases and on queues when updating, now when changing a statemachine is that a new version of the same state machine or a different machine. This is just some extra complexity to be aware of not a deal breaker.
+- Care need to be paid to the invocation of the state machine. None of the patterns on this page can possibly work without idempotence *however* its easy to miss the state machine creation itself also needs to be made idempotent. 
+
+### Notes
+- This is a good solution if this is going to be a common problem, or you are generally heading down the path of orchestration over co-ordination.
+
+## Change Data Capture / WAL Log Tailing
+As in the example at the top of the page often there is a primary datastore that is being used, be it an RDBMS or NoSQL solution like Cassandra, HBase, Mongo etc. 
+A common pattern (though not in every database) is to have a Write Ahead Log (WAL), or Journal that writes are written to. This is used normally used for replication and crash recovery.
+This can be used to track the changes made.
+Application
+```java
+TodoItem saveTodoItem(TodoItemSpec spec) {
+    // begin transaction
+    return todoItemRepo.save(spec)
+    // end transaction
+}
+```
+Change Data Capture Service
+```java
+void receiveWal(Wal wal) {
+    List<ChangeEvent> events = parse(wal);
+    emitEvents(events);
+}
+```
+Listener
+```java
+void alertOnTodoItemCreate(ChangeEvent changeEvent) {
+    if (changeEvent.type() == CREATE) {
+        alertService.createAlert(createAlert(changeEvent.getObject()))
+    }
+}
+```
+### Pros
+- Handles the transactionality for you in that transactions that dont commit are not in the WAL (in most cases other cases might record the absence of commit)
+
+### Cons
+- Requires a database with a journal or wal
+- Requires understanding the structure of the journal or wal and keeping up to date with this (handled by open source libraries such as debezium)
+- Only information that was stored is available
+
+### Notes
+- This is a great fit for problems like replicating data from one store to another for different quering such writing to RDBMS and then replicating to a column store or other form of storage.
+
 ## Transactional Outbox
+
+## Queue first / Eventing
