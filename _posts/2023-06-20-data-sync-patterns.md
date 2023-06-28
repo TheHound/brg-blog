@@ -4,6 +4,8 @@ title:  "Data synchronisation patterns"
 date:   2023-06-27 12:39:37 +0100
 categories: jekyll update
 ---
+* Table of contents
+{:toc}
 # Scenario
 You want to save some data to a database, usually a transactional db, and take additional actions. i.e. In pseudo code:
 ```java
