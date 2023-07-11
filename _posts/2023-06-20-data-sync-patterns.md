@@ -6,7 +6,7 @@ categories: jekyll update
 ---
 * Table of contents
 {:toc}
-# Scenario
+## Scenario
 You want to save some data to a database, usually a transactional db, and take additional actions. i.e. In pseudo code:
 ```java
 TodoItem saveTodoItem(TodoItemSpec spec) {
@@ -37,11 +37,11 @@ We still have issues however
 - If `alertService.sendNewItemAddedAlert` throws not only do we not create our audit but we probably throw an exception / return and error code implying the `saveTodoItem` failed when in fact it is there in the db
 Lets now go over strategies to deal with this.
 
-# Solutions
-## Who gives a shit
+## Solutions
+### Who gives a shit
 Its important to note this isn't something that always needs to be solved. All solutions that actually solve the problem in a reasonable manner increase the complexity. Maybe this code is called every minute doing the exact same thing and missing a run or two doesn't matter. Don't invent requirements of consistency where they do not exist. 
 
-## Verify after publish
+### Verify after publish
 The idea behind this is to always publish information to a queue then process with a delay. The listening application can then verify the data,
 ![Diagram of Application publishes to Queue while listener consumes from queue and calls to application to verify](/assets/img/2023-06-20-data-sync-patterns-1.png)
 Application
@@ -68,16 +68,16 @@ void handleNewItemAddedAlert(AlertSpec alertSpec) {
 The idea here being if the transaction commits and successfully then we have 2 items on our queues. These items can be removed from the queue after 1 minute and verify the transaction was successful.   
 If the transaction did not succeed we may end up with messages on our queue anyway. When these are processed they will attempt to verify the success of the transaction and fail. These messages should be discarded. 
 
-### Pros
+#### Pros
 - Simple to write assuming you are already using queues
 - Plays nice with immutable data stores / event sourcing model (i.e. no updates / deletes)
 
-### Cons
+#### Cons
 - Latency - You don't actually have to wait 60 seconds per message only 60 seconds since message was put on queue but even so you still need to wait. Without waiting you might call back too early before the transaction has committed and assume it failed when it is still in fact in progress. 
 - How to decide / set the timeout - In the example above I used 60 seconds but what if the transaction took longer than 60 seconds? Messages would be received, it would be assumed that the transaction had done a rollback and the message would be discarded. The transaction might complete and now we have lost a message. Need to account for this somehow.
 - Doesn't work naturally for updates, only creates - A create can be verified at a later date, is it there or not, an in place update cannot be reliably verified after the fact without additional tracking tables. For example we could have a table of transaction uuids that we commit to and then call back to verify present in that table or not.
 
-## State machines
+### State machines
 You can use a state machine to track the state and pass data between them. 
 Completely made up pseudo code syntax:
 ```java
@@ -101,19 +101,19 @@ void saveTodoItemFromQueue(TodoItemSpec spec) {
 }
 ```
 
-### Pros
+#### Pros
 - Battle tested open source tooling exists for this.
 - Tooling often comes with good observability, ability to see how many in flight state machines there are and  at what states with what data.
 
-### Cons
+#### Cons
 - State machine libraries are often a significant departure from the previous way of writing code. They can come with additional infrastructure requirements, needing somewhere to queue messages, track states and their inputs / outputs etc.
 - The 'state' of your application is now persisted between runs, previously only had to consider data that was stored in databases and on queues when updating version of your app, now when changing a state machine is that a new version of the same state machine or a different machine? This is just some extra complexity to be aware of not a deal breaker.
 - Care needs to be paid to the invocation of the state machine. None of the patterns on this page can possibly work without idempotence *however* its easy to miss the state machine creation itself also needs to be made idempotent. 
 
-### Notes
+#### Notes
 - This is a good solution if this is going to be a common problem, or you are generally heading down the path of orchestration over co-ordination.
 
-## Change Data Capture / WAL Log Tailing
+### Change Data Capture / WAL Log Tailing
 As in the example at the top of the page often there is a primary datastore that is being used, be it an RDBMS or NoSQL solution like Cassandra, HBase, Mongo etc.   
 A common pattern (though not in every database) is to have a Write Ahead Log (WAL), or Journal that writes are written to. This is normally used for replication and crash recovery.  
 This can be used to track the changes made and react to them.   
@@ -140,18 +140,18 @@ void alertOnTodoItemCreate(ChangeEvent changeEvent) {
     }
 }
 ```
-### Pros
+#### Pros
 - Handles the transactionality for you in that transactions that don't commit are not in the WAL (in most cases, other cases might record the absence of commit in WAL either way its possible to tell)
 
-### Cons
+#### Cons
 - Requires a database with a journal or wal
 - Requires understanding the structure of the journal or wal and keeping up to date with this (handled by open source libraries such as [Debezium](https://debezium.io/))
 - Only information that was stored is available. For example in the example we are using you can create an audit entry and alert from just to the `TodoItem`. What if we needed the current logged in user as well but that is not a column in the database?
 
-### Notes
+#### Notes
 - This is a great fit for problems like replicating data from one store to another for different querying such writing to RDBMS and then replicating to a column store or other form of storage.
 
-## Transactional Outbox
+### Transactional Outbox
 If the primary store is a transactional database we can piggy back off the transaction to ensure eventual consistency.
 ```java
 TodoItem saveTodoItem(TodoItemSpec spec) {
@@ -185,17 +185,17 @@ void backGroundMethod() {
 }
 ```
 
-### Pros
+#### Pros
 - Simple to code and understand.
 - Requires no additional infrastructure or rewrite from using http to using queues or other technology.
 - The pattern is language agnostic and therefore can easily be followed in polyglot organizations.
 
-### Cons
+#### Cons
 - You need a transactional database for this otherwise we are back where we started with some rows being inserted while others are not.
 - You now have a queue in your database and everything that comes with it, monitoring and concurrency.
 - The above code is quite simple but you still probably need some additional logic if you want to support high (think 10,000+ transactions per second with this approach).
 
-## Queue first / Eventing
+### Queue first / Eventing
 If you are building an Event Sourcing application everything is first and event before it is written to a database so the original example would look more like
 ```java
 void createTodoItem(TodoItemSpec spec) {
@@ -226,7 +226,7 @@ void onTodoItemCreationEventUpdateDb(TodoItemCreationEvent event){
 Note we are now back to needing to perform 2 actions at which point we are falling into one of the solutions from above.
 The summary hear is event sourcing needs to be paired with a solution to this problem it is not a solution in itself.
 
-# Closing Thoughts
+## Closing Thoughts
 That is by no means exhaustive just some of the common approaches I have seen. Recommendations are always dangerous given lack of knowledge about requirements, volumes etc but that said my preferred order for the generic case is:
 
 1. Transactional Outbox
