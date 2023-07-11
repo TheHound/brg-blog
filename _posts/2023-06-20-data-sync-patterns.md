@@ -196,7 +196,7 @@ void backGroundMethod() {
 - The above code is quite simple but you still probably need some additional logic if you want to support high (think 10,000+ transactions per second with this approach).
 
 ### Queue first / Eventing
-If you are building an Event Sourcing application everything is first and event before it is written to a database so the original example would look more like
+If you are building an Event Sourcing application everything is first an event before it is written to a database. So the original example would look more like:
 ```java
 void createTodoItem(TodoItemSpec spec) {
     validateSpec(spec);
@@ -215,16 +215,16 @@ void onTodoItemCreationEventCreateAlert(TodoItemCreationEvent event){
     alertService.createAlert(createAlert(event));
 }
 ```
-This assumes however that we are happy with all 3 happening in parallel in which case some events might appear / be processed before others. For example the audit entry might appear before it can bee seen from the todoItemRepo.
-If we don't want this we need to introduce a 2nd event say `TodoItemCreatedEvent` which will be emitted post save ala
+This assumes however that we are happy with all 3 happening in parallel in which case some events might appear / be processed before others. For example the audit entry might appear before it can be seen from the todoItemRepo.
+If we don't want this we need to introduce a 2nd event say `TodoItemCreatedEvent` which will be emitted post save ala:
 ```java
 void onTodoItemCreationEventUpdateDb(TodoItemCreationEvent event){
     TodoItem item = todoItemRepo.save(spec);
     eventsService.createEvent(new TodoItemCreatedEvent(item));
 }
 ```
-Note we are now back to needing to perform 2 actions at which point we are falling into one of the solutions from above.
-The summary hear is event sourcing needs to be paired with a solution to this problem it is not a solution in itself.
+Note we are now back to needing to perform 2 actions at which point we are falling into one of the solutions from above.  
+The summary here is event sourcing needs to be paired with a solution to this problem it is not a solution itself.
 
 ## Closing Thoughts
 That is by no means exhaustive just some of the common approaches I have seen. Recommendations are always dangerous given lack of knowledge about requirements, volumes etc but that said my preferred order for the generic case is:
